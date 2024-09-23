@@ -34,3 +34,6 @@
 # MSVC build artifacts
 *.ilk
 *.pdb
+
+# Weird Visual Studio stuff...
+3d-gfx-a.*
