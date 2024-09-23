@@ -1,8 +1,10 @@
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_vulkan.h>
 #include <vulkan/vulkan.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <Windows.h>
 
 #define WIDTH 640
 #define HEIGHT 480
@@ -27,6 +29,21 @@ int main(int argc, char **argv)
 	{
 		printf("Window could not be created! %s", SDL_GetError());
 		return 1;
+	}
+
+	VkInstanceCreateInfo vkicInfo = {
+		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+		.pNext = 0,
+		.pApplicationInfo = 0,
+		.enabledLayerCount = 0,
+		.ppEnabledLayerNames = 0,
+		.enabledExtensionCount = 0,
+		.ppEnabledExtensionNames = 0,
+	};
+	VkInstance instance;
+	if (!vkCreateInstance(&vkicInfo, 0, &instance))
+	{
+		printf("Vulkan created instance successfully!\n");
 	}
 
 	SDL_Event e;
