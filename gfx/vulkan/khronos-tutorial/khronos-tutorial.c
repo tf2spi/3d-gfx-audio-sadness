@@ -32,10 +32,40 @@ static uint32_t minu32(uint32_t x, uint32_t y)
 	return x < y ? x : y;
 }
 
+static VKAPI_ATTR VkBool32 VKAPI_CALL vkDbgCb(
+	VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+	VkDebugUtilsMessageTypeFlagsEXT flags,
+	const VkDebugUtilsMessengerCallbackDataEXT *data,
+	void *userdata)
+{
+	(void)userdata;
+	eprintf("Super-Epic Validation Layer: %08x,%08x,%s\n", severity, flags, data->pMessage);
+	return VK_FALSE;
+}
+static VkDebugUtilsMessengerCreateInfoEXT vkdumcInfo =
+{
+	.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+	.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT,
+	.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
+	| VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+	| VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
+	.pfnUserCallback = vkDbgCb,
+	.pUserData = 0,
+};
+
 int main(int argc, char **argv)
 {
 	(void)argc;
 	(void)argv;
+
+	// Debug variables
+	const char *vkicLayers[] = {
+		"VK_LAYER_KHRONOS_validation",
+	};
+	const char *vkExtensionsExtra[] = {
+		VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+	};
+	VkDebugUtilsMessengerCreateInfoEXT *pVkDumcInfo = &vkdumcInfo;
 
 	SDL_SetMainReady();
 	if (SDL_Init(SDL_INIT_VIDEO) < 0)
@@ -60,18 +90,21 @@ int main(int argc, char **argv)
 	const char **vkExtensions = 0;
 	uint32_t vkExtensionsCount = 0;
 	if (!SDL_Vulkan_GetInstanceExtensions(window, &vkExtensionsCount, vkExtensions)
-		|| !(vkExtensions = malloc(vkExtensionsCount * sizeof(*vkExtensions)))
+		|| !(vkExtensions = malloc((vkExtensionsCount + ARRAYSIZE(vkExtensionsExtra)) * sizeof(*vkExtensions)))
 		|| !SDL_Vulkan_GetInstanceExtensions(window, &vkExtensionsCount, vkExtensions))
 	{
 		eprintf("Failed to get Vulkan extensions!\n");
 		return 1;
+	}
+	for (uint32_t i = 0; i < ARRAYSIZE(vkExtensionsExtra); i++)
+	{
+		vkExtensions[vkExtensionsCount++] = vkExtensionsExtra[i];
 	}
 	eprintf("Vulkan Extensions:\n");
 	for (uint32_t i = 0; i < vkExtensionsCount; i++)
 	{
 		eprintf("\t%s\n", vkExtensions[i]);
 	}
-
 	VkApplicationInfo vkaInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -85,10 +118,10 @@ int main(int argc, char **argv)
 	VkInstanceCreateInfo vkicInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-		.pNext = 0,
+		.pNext = pVkDumcInfo,
 		.pApplicationInfo = &vkaInfo,
-		.enabledLayerCount = 0,
-		.ppEnabledLayerNames = 0,
+		.enabledLayerCount = ARRAYSIZE(vkicLayers),
+		.ppEnabledLayerNames = vkicLayers,
 		.enabledExtensionCount = vkExtensionsCount,
 		.ppEnabledExtensionNames = vkExtensions,
 	};
@@ -96,6 +129,14 @@ int main(int argc, char **argv)
 	if (VK_SUCCESS != vkCreateInstance(&vkicInfo, NULL, &vkInstance))
 	{
 		eprintf("Failed to create Vulkan instance!\n");
+		return 1;
+	}
+	VkDebugUtilsMessengerEXT vkDebugMessenger = 0;
+	PFN_vkCreateDebugUtilsMessengerEXT vkcdumProcAddr = (PFN_vkCreateDebugUtilsMessengerEXT)
+		vkGetInstanceProcAddr(vkInstance, "vkCreateDebugUtilsMessengerEXT");
+	if (!vkcdumProcAddr || VK_SUCCESS != vkcdumProcAddr(vkInstance, pVkDumcInfo, 0, &vkDebugMessenger))
+	{
+		eprintf("Failed to create debug messenger!\n");
 		return 1;
 	}
 
@@ -324,5 +365,9 @@ int main(int argc, char **argv)
 
 	SDL_DestroyWindow(window);
 	SDL_Quit();
+
+	// This is only one of the many things we need to clean up.
+	// This is here now only to test that debug messenger flags this.
+	vkDestroyInstance(vkInstance, 0);
 	return 0;
 }
