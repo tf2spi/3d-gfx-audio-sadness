@@ -5,6 +5,7 @@
  * https://docs.tizen.org/application/native/guides/graphics/vulkan/
  * 
  * After that, I then followed Khronos's tutorial for all other setup.
+ * https://docs.vulkan.org/tutorial/latest/00_Introduction.html
  */
 #define SDL_MAIN_HANDLED
 #include <SDL2/SDL.h>
@@ -21,6 +22,15 @@
 #define APP_SHORT_NAME "KhrTut"
 
 #define eprintf(...) fprintf(stderr, __VA_ARGS__)
+
+static uint32_t clampu32(uint32_t x, uint32_t l, uint32_t h)
+{
+	return x < l ? l : (x > h ? h : x);
+}
+static uint32_t minu32(uint32_t x, uint32_t y)
+{
+	return x < y ? x : y;
+}
 
 int main(int argc, char **argv)
 {
@@ -105,6 +115,22 @@ int main(int argc, char **argv)
 	}
 	VkPhysicalDevice vkPhysDevice = vkPhysicalDevices[0];
 
+	VkExtensionProperties *vkDeviceExtensions = 0;
+	uint32_t vkDeviceExtensionsCount = 0;
+	if (VK_SUCCESS != vkEnumerateDeviceExtensionProperties(vkPhysDevice, 0, &vkDeviceExtensionsCount, vkDeviceExtensions)
+		|| !(vkDeviceExtensions = malloc(vkDeviceExtensionsCount * sizeof(*vkDeviceExtensions)))
+		|| VK_SUCCESS != vkEnumerateDeviceExtensionProperties(vkPhysDevice, 0, &vkDeviceExtensionsCount, vkDeviceExtensions))
+	{
+		eprintf("Failed to enumerate device extension properties!\n");
+		return 1;
+	}
+
+	eprintf("Device extension names:\n");
+	for (uint32_t i = 0; i < vkDeviceExtensionsCount; i++)
+	{
+		eprintf("\t%s\n", vkDeviceExtensions[i].extensionName);
+	}
+
 	VkQueueFamilyProperties *vkQueueProps = 0;
 	uint32_t vkQueueCount = 0;
 	vkGetPhysicalDeviceQueueFamilyProperties(vkPhysDevice, &vkQueueCount, vkQueueProps);
@@ -128,6 +154,10 @@ int main(int argc, char **argv)
 	}
 
 	const float vkQueuePriorities[1] = { 0.0f };
+	const char *vkdcEnabledExtensions[] =
+	{
+		"VK_KHR_swapchain",
+	};
 	const VkDeviceQueueCreateInfo vkdqcInfo[1] =
 	{
 		{
@@ -146,8 +176,8 @@ int main(int argc, char **argv)
 		.pQueueCreateInfos = vkdqcInfo,
 		.enabledLayerCount = 0,
 		.ppEnabledLayerNames = 0,
-		.enabledExtensionCount = 0,
-		.ppEnabledExtensionNames = 0,
+		.enabledExtensionCount = ARRAYSIZE(vkdcEnabledExtensions),
+		.ppEnabledExtensionNames = vkdcEnabledExtensions,
 		.pEnabledFeatures = 0,
 	};
 	VkDevice vkDevice = 0;
@@ -170,7 +200,112 @@ int main(int argc, char **argv)
 		eprintf("Failed to confirm that physical device supports surface!\n");
 		return 1;
 	}
-	(void)vkDevice;
+
+	VkSurfaceCapabilitiesKHR vkSurfaceCaps;
+	if (VK_SUCCESS != vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vkPhysDevice, vkSurface, &vkSurfaceCaps))
+	{
+		eprintf("Failed to get physical surface capabilities!\n");
+		return 1;
+	}
+
+	VkSurfaceFormatKHR *vkFormats = 0;
+	uint32_t vkFormatsCount = 0;
+	if (VK_SUCCESS != vkGetPhysicalDeviceSurfaceFormatsKHR(vkPhysDevice, vkSurface, &vkFormatsCount, vkFormats)
+		|| !(vkFormats = malloc(vkFormatsCount * sizeof(*vkFormats)))
+		|| VK_SUCCESS != vkGetPhysicalDeviceSurfaceFormatsKHR(vkPhysDevice, vkSurface, &vkFormatsCount, vkFormats))
+	{
+		eprintf("Failed to get surface formats!\n");
+		return 1;
+	}
+
+	VkPresentModeKHR *vkPresentModes = 0;
+	uint32_t vkPresentModesCount = 0;
+	if (VK_SUCCESS != vkGetPhysicalDeviceSurfacePresentModesKHR(vkPhysDevice, vkSurface, &vkPresentModesCount, vkPresentModes)
+		|| !(vkPresentModes = malloc(vkPresentModesCount * sizeof(*vkPresentModes)))
+		|| VK_SUCCESS != vkGetPhysicalDeviceSurfacePresentModesKHR(vkPhysDevice, vkSurface, &vkPresentModesCount, vkPresentModes))
+	{
+		eprintf("Failed to get presentation modes!\n");
+		return 1;
+	}
+
+	eprintf("VK Surface Formats:\n");
+	VkSurfaceFormatKHR *vkFormatDesired = &vkFormats[0];
+	for (uint32_t i = 0; i < vkFormatsCount; i++)
+	{
+		VkSurfaceFormatKHR *vkFormatCurrent = &vkFormats[i];
+		eprintf("Format,Colorspace = %u,%u\n", vkFormatCurrent->format, vkFormatCurrent->colorSpace);
+		if ((VK_FORMAT_B8G8R8_SNORM == vkFormatCurrent->format
+			|| VK_FORMAT_B8G8R8A8_UNORM == vkFormatCurrent->format)
+			&& VK_COLOR_SPACE_SRGB_NONLINEAR_KHR == vkFormatCurrent->colorSpace)
+		{
+			eprintf("I have found my desired colorspace!\n");
+			vkFormatDesired = vkFormatCurrent;
+		}
+	}
+	eprintf("VK desired format: %u,%u\n", vkFormatDesired->format, vkFormatDesired->colorSpace);
+
+	VkPresentModeKHR vkPresentModeDesired = VK_PRESENT_MODE_FIFO_KHR;
+	eprintf("VK presentation modes\n");
+	for (uint32_t i = 0; i < vkPresentModesCount; i++)
+	{
+		VkPresentModeKHR vkPresentModeCurrent = vkPresentModes[i];
+		eprintf("\t%d\n", vkPresentModeCurrent);
+		if (VK_PRESENT_MODE_MAILBOX_KHR == vkPresentModeCurrent)
+			eprintf("Found Mailbox! Don't care!\n");
+	}
+	eprintf("VK desired presentation mode: %d\n", vkPresentModeDesired);
+
+	uint32_t extentWidth = vkSurfaceCaps.currentExtent.width;
+	uint32_t extentHeight = vkSurfaceCaps.currentExtent.height;
+	if (extentWidth == UINT32_MAX || extentHeight == UINT32_MAX)
+	{
+		int w, h;
+		SDL_GetWindowSize(window, &w, &h);
+		extentWidth = clampu32(w, vkSurfaceCaps.minImageExtent.width, vkSurfaceCaps.maxImageExtent.width);
+		extentHeight = clampu32(w, vkSurfaceCaps.minImageExtent.height, vkSurfaceCaps.maxImageExtent.height);
+	}
+	vkSurfaceCaps.currentExtent.width = extentWidth;
+	vkSurfaceCaps.currentExtent.height = extentHeight;
+
+	VkExtent2D vkExtentDesired = vkSurfaceCaps.currentExtent;
+	uint32_t imageCount = minu32(vkSurfaceCaps.minImageCount + 1, vkSurfaceCaps.maxImageCount);
+	VkSwapchainCreateInfoKHR vkscInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+		.surface = vkSurface,
+		.minImageCount = imageCount,
+		.imageFormat = vkFormatDesired->format,
+		.imageColorSpace = vkFormatDesired->colorSpace,
+		.imageExtent = vkExtentDesired,
+		.imageArrayLayers = 1,
+		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		/*
+		 * NOTE:
+		 * We differ from the Khronos tutorial right now by having
+		 * the graphics queue family equal to the presentation queue family.
+		 * If we couldn't find such a queue, we would set the fields
+		 * like this instead...
+		 * 
+		 * .imageSharingMode = VK_SHARING_MODE_CONCURRENT,
+		 * .queueFamilyIndexCount = 2,
+		 * .pQueueFamilyIndices = (uint32_t[2]){grFamily,prFamily},
+		 */
+		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.queueFamilyIndexCount = 0,
+		.pQueueFamilyIndices = 0,
+		.preTransform = vkSurfaceCaps.currentTransform,
+		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+		.presentMode = vkPresentModeDesired,
+		.clipped = VK_TRUE,
+		.oldSwapchain = 0,
+	};
+	VkSwapchainKHR vkSwapChain;
+	if (VK_SUCCESS != vkCreateSwapchainKHR(vkDevice, &vkscInfo, 0, &vkSwapChain))
+	{
+		eprintf("Failed to create the swapchain!\n");
+		return 1;
+	}
+	eprintf("Finally created the swap chain! (My god...)\n");
 
 	SDL_Event e;
 	bool quit = false;
