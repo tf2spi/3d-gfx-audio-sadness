@@ -340,13 +340,54 @@ int main(int argc, char **argv)
 		.clipped = VK_TRUE,
 		.oldSwapchain = 0,
 	};
-	VkSwapchainKHR vkSwapChain;
-	if (VK_SUCCESS != vkCreateSwapchainKHR(vkDevice, &vkscInfo, 0, &vkSwapChain))
+	(void)vkExtentDesired;
+	VkSwapchainKHR vkSwapchain;
+	if (VK_SUCCESS != vkCreateSwapchainKHR(vkDevice, &vkscInfo, 0, &vkSwapchain))
 	{
 		eprintf("Failed to create the swapchain!\n");
 		return 1;
 	}
-	eprintf("Finally created the swap chain! (My god...)\n");
+
+	VkImage *vkSwapchainImages = 0;
+	uint32_t vkSwapchainImagesCount = 0;
+	VkImageView *vkSwapchainImageViews = 0;
+
+	if (VK_SUCCESS != vkGetSwapchainImagesKHR(vkDevice, vkSwapchain, &vkSwapchainImagesCount, vkSwapchainImages)
+		|| !(vkSwapchainImages = malloc(vkSwapchainImagesCount * sizeof(*vkSwapchainImages)))
+		|| !(vkSwapchainImageViews = calloc(sizeof(*vkSwapchainImageViews), vkSwapchainImagesCount))
+		|| VK_SUCCESS != vkGetSwapchainImagesKHR(vkDevice, vkSwapchain, &vkSwapchainImagesCount, vkSwapchainImages))
+	{
+		eprintf("Failed to get swapchain images!\n");
+		return 1;
+	}
+	
+	for (uint32_t i = 0; i < vkSwapchainImagesCount; i++)
+	{
+		VkImageViewCreateInfo vkivcInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = vkSwapchainImages[i],
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = vkFormatDesired->colorSpace,
+			.components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.subresourceRange.baseMipLevel = 0,
+			.subresourceRange.levelCount = 1,
+			.subresourceRange.baseArrayLayer = 0,
+			.subresourceRange.layerCount = 1,
+		};
+
+		if (VK_SUCCESS != vkCreateImageView(vkDevice, &vkivcInfo, 0, &vkSwapchainImageViews[i]))
+		{
+			eprintf("Failed to create image views!\n");
+			return 1;
+		}
+	}
+
+	eprintf("Finally created the swap chain + views! (My god...)\n");
 
 	SDL_Event e;
 	bool quit = false;
