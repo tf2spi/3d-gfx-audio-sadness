@@ -14,8 +14,11 @@
 #include <stdio.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include <Windows.h>
 #include <stdint.h>
+
+#ifndef ARRAYSIZE
+#define ARRAYSIZE(a) (sizeof(a) / sizeof(*a))
+#endif
 
 #define WIDTH 640
 #define HEIGHT 480
@@ -126,9 +129,10 @@ int main(int argc, char **argv)
 		.ppEnabledExtensionNames = vkExtensions,
 	};
 	VkInstance vkInstance = 0;
-	if (VK_SUCCESS != vkCreateInstance(&vkicInfo, NULL, &vkInstance))
+	VkResult err;
+	if (VK_SUCCESS != (err = vkCreateInstance(&vkicInfo, NULL, &vkInstance)))
 	{
-		eprintf("Failed to create Vulkan instance!\n");
+		eprintf("Failed to create Vulkan instance! %d\n", err);
 		return 1;
 	}
 	VkDebugUtilsMessengerEXT vkDebugMessenger = 0;
