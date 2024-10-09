@@ -37,3 +37,6 @@
 
 # Weird Visual Studio stuff...
 3d-gfx-a.*
+
+# SPIR-V files
+*.spv

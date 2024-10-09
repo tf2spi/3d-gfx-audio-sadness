@@ -35,6 +35,34 @@ static uint32_t minu32(uint32_t x, uint32_t y)
 	return x < y ? x : y;
 }
 
+static void *readfile(const char *fname, size_t *len_p) {
+	FILE *fp = fopen(fname, "rb");
+	if (fp == NULL)
+		return NULL;
+
+	size_t lenmax = UINT16_MAX;
+	void *mem = malloc(lenmax);
+
+	size_t i = 0;
+	int err = -1;
+	if (mem != NULL) {
+		while (i < lenmax) {
+			size_t lenread = fread(mem, 1, lenmax - i, fp);
+			if (lenread == 0)
+				break;
+			i += lenread;
+		}
+		err = ferror(fp);
+		fclose(fp);
+	}
+	if (err != 0 || i == lenmax) {
+		free(mem);
+		mem = NULL;
+	}
+	*len_p = i;
+	return mem;
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL vkDbgCb(
 	VkDebugUtilsMessageSeverityFlagBitsEXT severity,
 	VkDebugUtilsMessageTypeFlagsEXT flags,
@@ -55,6 +83,7 @@ static VkDebugUtilsMessengerCreateInfoEXT vkdumcInfo =
 	.pfnUserCallback = vkDbgCb,
 	.pUserData = 0,
 };
+
 
 int main(int argc, char **argv)
 {
@@ -372,7 +401,7 @@ int main(int argc, char **argv)
 			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 			.image = vkSwapchainImages[i],
 			.viewType = VK_IMAGE_VIEW_TYPE_2D,
-			.format = vkFormatDesired->colorSpace,
+			.format = vkFormatDesired->format,
 			.components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
 			.components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
 			.components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
@@ -390,8 +419,253 @@ int main(int argc, char **argv)
 			return 1;
 		}
 	}
-
 	eprintf("Finally created the swap chain + views! (My god...)\n");
+
+
+	VkPipelineLayoutCreateInfo vkplcInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+		.setLayoutCount = 0,
+		.pSetLayouts = 0,
+		.pushConstantRangeCount = 0,
+		.pPushConstantRanges = 0,
+	};
+
+	VkPipelineLayout vkPipelineLayout;
+	if (VK_SUCCESS != vkCreatePipelineLayout(vkDevice, &vkplcInfo, 0, &vkPipelineLayout))
+	{
+		eprintf("Pipeline layout creation failed!\n");
+		return 1;
+	}
+
+	VkAttachmentDescription vkAttachmentDescriptions[] =
+	{
+		{
+			.format = vkFormatDesired->format,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+		},
+	};
+	VkAttachmentReference vkAttachmentReferences[] =
+	{
+		{
+			.attachment = 0,
+			.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		},
+	};
+	VkSubpassDescription vkSubpassDescriptions[] =
+	{
+		{
+			.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+			.colorAttachmentCount = ARRAYSIZE(vkAttachmentReferences),
+			.pColorAttachments = vkAttachmentReferences,
+		}
+	};
+	VkRenderPassCreateInfo vkrpcInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+		.attachmentCount = ARRAYSIZE(vkAttachmentDescriptions),
+		.pAttachments = vkAttachmentDescriptions,
+		.subpassCount = ARRAYSIZE(vkSubpassDescriptions),
+		.pSubpasses = vkSubpassDescriptions,
+	};
+	VkRenderPass vkRenderPass;
+	if (VK_SUCCESS != vkCreateRenderPass(vkDevice, &vkrpcInfo, 0, &vkRenderPass))
+	{
+		eprintf("Failed to create render pass!\n");
+		return 1;
+	}
+
+	size_t shadervlen, shaderflen;
+	void *shaderv = readfile("vertex.spv", &shadervlen);
+	void *shaderf = readfile("fragment.spv", &shaderflen);
+	if (shaderv == NULL || shaderf == NULL)
+	{
+		eprintf("Failed to read shaders. Sadge...\n");
+		return 1;
+	}
+
+	VkShaderModuleCreateInfo vksmcInfoVertex =
+	{
+		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.codeSize = shadervlen,
+		.pCode = shaderv,
+	};
+	VkShaderModuleCreateInfo vksmcInfoFragment =
+	{
+		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+		.codeSize = shaderflen,
+		.pCode = shaderf,
+	};
+
+	VkShaderModule shaderModuleVertex;
+	VkShaderModule shaderModuleFragment;
+	if (VK_SUCCESS != vkCreateShaderModule(vkDevice, &vksmcInfoVertex, 0, &shaderModuleVertex))
+	{
+		eprintf("Failed to create vertex shader module!\n");
+		return 1;
+	}
+	if (VK_SUCCESS != vkCreateShaderModule(vkDevice, &vksmcInfoFragment, 0, &shaderModuleFragment))
+	{
+		eprintf("Failed to create fragment shader module!\n");
+		return 1;
+	}
+
+	VkDynamicState vkDynStates[] =
+	{
+		VK_DYNAMIC_STATE_VIEWPORT,
+		VK_DYNAMIC_STATE_SCISSOR,
+	};
+	VkPipelineDynamicStateCreateInfo vkpdscInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+		.dynamicStateCount = ARRAYSIZE(vkDynStates),
+		.pDynamicStates = vkDynStates,
+	};
+	VkPipelineVertexInputStateCreateInfo vkpviscInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+		.vertexBindingDescriptionCount = 0,
+		.pVertexBindingDescriptions = 0,
+		.vertexAttributeDescriptionCount = 0,
+		.pVertexAttributeDescriptions = 0,
+	};
+	VkPipelineInputAssemblyStateCreateInfo vkpiascInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+		.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+		.primitiveRestartEnable = VK_FALSE,
+	};
+	VkViewport vkViewports[] =
+	{
+		{
+			.x = 0,
+			.y = 0,
+			.width = vkSurfaceCaps.currentExtent.width,
+			.height = vkSurfaceCaps.currentExtent.height,
+			.minDepth = 0,
+			.maxDepth = 1,
+		}
+	};
+	VkRect2D vkScissors[] =
+	{
+		{
+			.offset = {0, 0},
+			.extent = vkSurfaceCaps.currentExtent,
+		}
+	};
+	VkPipelineViewportStateCreateInfo vkpvscInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+		.viewportCount = ARRAYSIZE(vkViewports),
+		.pViewports = vkViewports,
+		.scissorCount = ARRAYSIZE(vkViewports),
+		.pScissors = vkScissors,
+	};
+	VkPipelineRasterizationStateCreateInfo vkprscInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+		.depthClampEnable = VK_FALSE,
+		.rasterizerDiscardEnable = VK_FALSE,
+		.polygonMode = VK_POLYGON_MODE_FILL,
+		.lineWidth = 1,
+		.depthBiasEnable = VK_FALSE,
+#if 0
+		// Would've been required if depth bias enabled
+		.depthBiasConstantFactor = 0,
+		.depthBiasClamp = 0,
+		.depthBiasSlopeFactor = 0,
+#endif
+	};
+	VkPipelineMultisampleStateCreateInfo vkpmscInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+		.sampleShadingEnable = VK_FALSE,
+		.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+		.minSampleShading = 1.0f,
+		.pSampleMask = 0,
+		.alphaToCoverageEnable = VK_FALSE,
+		.alphaToOneEnable = VK_FALSE,
+	};
+	// TODO: Depth and stenciling (ugh...)
+	// Ah yes. Color blending. My favorite...
+	VkPipelineColorBlendAttachmentState vkpcbaStates[] =
+	{
+		{
+			.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+			.blendEnable = VK_FALSE,
+#if 0
+			// Would have been required if blending was enabled
+			.srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+			.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+			.colorBlendOp = VK_BLEND_OP_ADD,
+			.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+			.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+			.alphaBlendOp = VK_BLEND_OP_ADD,
+#endif
+		},
+	};
+	VkPipelineColorBlendStateCreateInfo vkpcbscInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+		.attachmentCount = ARRAYSIZE(vkpcbaStates),
+		.pAttachments = vkpcbaStates,
+		.logicOpEnable = VK_FALSE,
+#if 0
+		// Would be required if logical operations were enabled
+		.logicOp = VK_LOGIC_OP_COPY,
+		.blendConstants = {0, 0, 0, 0},
+#endif
+	};
+
+	VkPipelineShaderStageCreateInfo vkpsscInfos[] = {
+		{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+			.stage = VK_SHADER_STAGE_VERTEX_BIT,
+			.module = shaderModuleVertex,
+			.pName = "main",
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+			.stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+			.module = shaderModuleFragment,
+			.pName = "main",
+		},
+	};
+
+	VkGraphicsPipelineCreateInfo vkgpcInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+		.stageCount = ARRAYSIZE(vkpsscInfos),
+		.pStages = vkpsscInfos,
+		.pVertexInputState = &vkpviscInfo,
+		.pInputAssemblyState = &vkpiascInfo,
+		.pViewportState = &vkpvscInfo,
+		.pRasterizationState = &vkprscInfo,
+		.pMultisampleState = &vkpmscInfo,
+		.pDepthStencilState = 0,
+		.pColorBlendState = &vkpcbscInfo,
+		.pDynamicState = &vkpdscInfo,
+		.layout = vkPipelineLayout,
+		.renderPass = vkRenderPass,
+		.subpass = 0,
+		.basePipelineHandle = VK_NULL_HANDLE,
+		.basePipelineIndex = -1,
+	};
+
+	VkPipeline vkGraphicsPipeline;
+	if (VK_SUCCESS != vkCreateGraphicsPipelines(vkDevice, VK_NULL_HANDLE, 1, &vkgpcInfo, 0, &vkGraphicsPipeline))
+	{
+		eprintf("Failed to create the graphics pipeline! AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!\n");
+		return 1;
+	}
+
+	eprintf("I created the graphics pipeline and I wanna kill someone!\n");
 
 	SDL_Event e;
 	bool quit = false;
