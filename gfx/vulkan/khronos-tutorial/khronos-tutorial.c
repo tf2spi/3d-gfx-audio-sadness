@@ -342,7 +342,11 @@ int main(int argc, char **argv)
 	vkSurfaceCaps.currentExtent.height = extentHeight;
 
 	VkExtent2D vkExtentDesired = vkSurfaceCaps.currentExtent;
+	// I fucking hate Vulkan so much
+	if (vkSurfaceCaps.maxImageCount == 0)
+		vkSurfaceCaps.maxImageCount = vkSurfaceCaps.minImageCount;
 	uint32_t imageCount = minu32(vkSurfaceCaps.minImageCount + 1, vkSurfaceCaps.maxImageCount);
+	eprintf("Min,Count,Max Image Count=%u,%u,%u\n", vkSurfaceCaps.minImageCount, imageCount, vkSurfaceCaps.maxImageCount);
 	VkSwapchainCreateInfoKHR vkscInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -393,6 +397,11 @@ int main(int argc, char **argv)
 		eprintf("Failed to get swapchain images!\n");
 		return 1;
 	}
+	if (vkSwapchainImagesCount == 0)
+	{
+		eprintf("No swapchain images? Excuse me?");
+		return 1;
+	}
 	
 	for (uint32_t i = 0; i < vkSwapchainImagesCount; i++)
 	{
@@ -418,6 +427,10 @@ int main(int argc, char **argv)
 			eprintf("Failed to create image views!\n");
 			return 1;
 		}
+	}
+	for (uint32_t i = 0; i < vkSwapchainImagesCount; i++)
+	{
+		eprintf("Swapchain Image, View: %p, %p\n", vkSwapchainImages[i], vkSwapchainImageViews[i]);
 	}
 	eprintf("Finally created the swap chain + views! (My god...)\n");
 
@@ -466,6 +479,17 @@ int main(int argc, char **argv)
 			.pColorAttachments = vkAttachmentReferences,
 		}
 	};
+	VkSubpassDependency subpassDependencies[] =
+	{
+		{
+			.srcSubpass = VK_SUBPASS_EXTERNAL,
+			.dstSubpass = 0,
+			.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			.srcAccessMask = 0,
+			.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		}
+	};
 	VkRenderPassCreateInfo vkrpcInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
@@ -473,6 +497,8 @@ int main(int argc, char **argv)
 		.pAttachments = vkAttachmentDescriptions,
 		.subpassCount = ARRAYSIZE(vkSubpassDescriptions),
 		.pSubpasses = vkSubpassDescriptions,
+		.dependencyCount = ARRAYSIZE(subpassDependencies),
+		.pDependencies = subpassDependencies,
 	};
 	VkRenderPass vkRenderPass;
 	if (VK_SUCCESS != vkCreateRenderPass(vkDevice, &vkrpcInfo, 0, &vkRenderPass))
@@ -691,6 +717,7 @@ int main(int argc, char **argv)
 			eprintf("Failed to allocate framebuffer!\n");
 			return 1;
 		}
+		eprintf("Created framebuffer %zu from view %p: %p\n", i,  vkImageViewAttachments[0], vkFramebuffers[i]);
 	}
 	eprintf("Created Framebuffers!\n");
 
@@ -721,50 +748,36 @@ int main(int argc, char **argv)
 	}
 	eprintf("I did a command buffer!\n");
 
-	// "Record" a command buffer, whatever the hell that means... 
-#if 0
-	VkCommandBufferBeginInfo vkcbbInfo =
+	VkSemaphore imageAvailableSemaphore;
+	VkSemaphore renderFinishedSemaphore;
+	VkFence inFlightFence;
+	VkSemaphoreCreateInfo vksemcInfo =
 	{
-		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-		.flags = 0,
-		.pInheritanceInfo = 0,
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
 	};
-	if (VK_SUCCESS != vkBeginCommandBuffer(vkCommandBuffers[0], &vkcbbInfo))
+	VkFenceCreateInfo vkfcInfo =
 	{
-		eprintf("Beginning command buffer failed!\n");
+		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
+	};
+	if (VK_SUCCESS != vkCreateSemaphore(vkDevice, &vksemcInfo, 0, &imageAvailableSemaphore)
+		|| VK_SUCCESS != vkCreateSemaphore(vkDevice, &vksemcInfo, 0, &renderFinishedSemaphore)
+		|| VK_SUCCESS != vkCreateFence(vkDevice, &vkfcInfo, 0, &inFlightFence))
+	{
+		eprintf("Wasn't able to create synchronizatino primitive? What?\n");
 		return 1;
 	}
-	VkClearValue vkClearColors[] =
-	{
-		{
-			.color =
-			{
-				.float32 =
-				{
-					0, 0, 0, 1
-				}
-			}
-		}
-	};
-	VkRenderPassBeginInfo vkrpbInfo =
-	{
-		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-		.renderPass = vkRenderPass,
-		.framebuffer = vkFramebuffers[0],
-		.renderArea.offset = {0, 0},
-		.renderArea.extent = vkSurfaceCaps.currentExtent,
-		.clearValueCount = ARRAYSIZE(vkClearColors),
-		.pClearValues = vkClearColors,
-	};
-	vkCmdBeginRenderPass(vkCommandBuffers[0], &vkrpbInfo, VK_SUBPASS_CONTENTS_INLINE);
-	vkCmdSetViewport(vkCommandBuffers[0], 0, ARRAYSIZE(vkViewports), vkViewports);
-	vkCmdSetScissor(vkCommandBuffers[0], 0, ARRAYSIZE(vkScissors), vkScissors);
-	vkCmdDraw(vkCommandBuffers[0], 3, 1, 0, 0);
+
+	// "Record" a command buffer, whatever the hell that means... 
+#if 0
 #endif
 
 
 	SDL_Event e;
 	bool quit = false;
+	VkQueue vkGraphicsQueue, vkPresentQueue;
+	vkGetDeviceQueue(vkDevice, vkQueueNodeIndex, 0, &vkGraphicsQueue);
+	vkGetDeviceQueue(vkDevice, vkQueueNodeIndex, 0, &vkPresentQueue);
 	while (!quit)
 	{
 		while (SDL_PollEvent(&e))
@@ -776,6 +789,87 @@ int main(int argc, char **argv)
 				break;
 			}
 		}
+		uint32_t imageIndex = 0;
+		// vkWaitForFences(vkDevice, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+		vkAcquireNextImageKHR(vkDevice, vkSwapchain, UINT16_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+		vkResetCommandBuffer(vkCommandBuffers[0], 0);
+
+		VkCommandBufferBeginInfo vkcbbInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = 0,
+			.pInheritanceInfo = 0,
+		};
+		if (VK_SUCCESS != vkBeginCommandBuffer(vkCommandBuffers[0], &vkcbbInfo))
+		{
+			eprintf("Beginning command buffer failed!\n");
+			return 1;
+		}
+		VkClearValue vkClearColors[] =
+		{
+			{
+				.color =
+				{
+					.float32 =
+					{
+						0, 0, 0, 1
+					}
+				}
+			}
+		};
+		VkRenderPassBeginInfo vkrpbInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+			.renderPass = vkRenderPass,
+			.framebuffer = vkFramebuffers[imageIndex],
+			.renderArea.offset = {0, 0},
+			.renderArea.extent = vkSurfaceCaps.currentExtent,
+			.clearValueCount = ARRAYSIZE(vkClearColors),
+			.pClearValues = vkClearColors,
+		};
+		vkCmdBeginRenderPass(vkCommandBuffers[0], &vkrpbInfo, VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdSetViewport(vkCommandBuffers[0], 0, ARRAYSIZE(vkViewports), vkViewports);
+		vkCmdSetScissor(vkCommandBuffers[0], 0, ARRAYSIZE(vkScissors), vkScissors);
+		vkCmdDraw(vkCommandBuffers[0], 3, 1, 0, 0);
+		vkCmdEndRenderPass(vkCommandBuffers[0]);
+		if (VK_SUCCESS != vkEndCommandBuffer(vkCommandBuffers[0]))
+		{
+			eprintf("Failed to record the command buffer!\n");
+			return 1;
+		}
+
+		VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		VkSubmitInfo vkSubmitInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+			.waitSemaphoreCount = 1,
+			.pWaitSemaphores = &imageAvailableSemaphore,
+			.pWaitDstStageMask = &stageFlags,
+			.commandBufferCount = ARRAYSIZE(vkCommandBuffers),
+			.pCommandBuffers = vkCommandBuffers,
+			.signalSemaphoreCount = 1,
+			.pSignalSemaphores = &renderFinishedSemaphore,
+		};
+
+		if (VK_SUCCESS != vkQueueSubmit(vkGraphicsQueue, 1, &vkSubmitInfo, inFlightFence))
+		{
+			eprintf("Fasiled to submit queue!\n");
+			return 1;
+		}
+
+		VkSwapchainKHR vkSwapChains[] = {vkSwapchain};
+		VkPresentInfoKHR vkPresentInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+			.waitSemaphoreCount = 1,
+			.pWaitSemaphores = &renderFinishedSemaphore,
+			.swapchainCount = 1,
+			.pSwapchains = vkSwapChains,
+			.pImageIndices = &imageIndex,
+			.pResults = 0,
+		};
+		vkQueuePresentKHR(vkPresentQueue, &vkPresentInfo);
+		// vkResetFences(vkDevice, 1, &inFlightFence);
 	}
 
 	SDL_DestroyWindow(window);
