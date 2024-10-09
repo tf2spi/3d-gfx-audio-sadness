@@ -664,8 +664,104 @@ int main(int argc, char **argv)
 		eprintf("Failed to create the graphics pipeline! AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!\n");
 		return 1;
 	}
-
 	eprintf("I created the graphics pipeline and I wanna kill someone!\n");
+
+	uint32_t vkFramebuffersCount = vkSwapchainImagesCount;
+	VkFramebuffer *vkFramebuffers = calloc(vkFramebuffersCount, sizeof(*vkFramebuffers));
+	if (vkFramebuffers == NULL)
+	{
+		eprintf("Failed to allocate array of Framebuffers!\n");
+		return 1;
+	}
+	for (size_t i = 0; i < vkFramebuffersCount; i++)
+	{
+		VkImageView vkImageViewAttachments[] = { vkSwapchainImageViews[i] };
+		VkFramebufferCreateInfo vkfcInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			.renderPass = vkRenderPass,
+			.attachmentCount = ARRAYSIZE(vkImageViewAttachments),
+			.pAttachments = vkImageViewAttachments,
+			.width = vkSurfaceCaps.currentExtent.width,
+			.height = vkSurfaceCaps.currentExtent.height,
+			.layers = 1,
+		};
+		if (VK_SUCCESS != vkCreateFramebuffer(vkDevice, &vkfcInfo, 0, &vkFramebuffers[i]))
+		{
+			eprintf("Failed to allocate framebuffer!\n");
+			return 1;
+		}
+	}
+	eprintf("Created Framebuffers!\n");
+
+	VkCommandPoolCreateInfo vkpcInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+		.queueFamilyIndex = vkQueueNodeIndex,
+	};
+	VkCommandPool vkPool;
+	if (VK_SUCCESS != vkCreateCommandPool(vkDevice, &vkpcInfo, 0, &vkPool))
+	{
+		eprintf("Failed to create command pool!\n");
+		return 1;
+	}
+	VkCommandBuffer vkCommandBuffers[1];
+	VkCommandBufferAllocateInfo vkcbaInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = vkPool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = ARRAYSIZE(vkCommandBuffers),
+	};
+	if (VK_SUCCESS != vkAllocateCommandBuffers(vkDevice, &vkcbaInfo, vkCommandBuffers))
+	{
+		eprintf("Failed to create command buffers!\n");
+		return 1;
+	}
+	eprintf("I did a command buffer!\n");
+
+	// "Record" a command buffer, whatever the hell that means... 
+#if 0
+	VkCommandBufferBeginInfo vkcbbInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = 0,
+		.pInheritanceInfo = 0,
+	};
+	if (VK_SUCCESS != vkBeginCommandBuffer(vkCommandBuffers[0], &vkcbbInfo))
+	{
+		eprintf("Beginning command buffer failed!\n");
+		return 1;
+	}
+	VkClearValue vkClearColors[] =
+	{
+		{
+			.color =
+			{
+				.float32 =
+				{
+					0, 0, 0, 1
+				}
+			}
+		}
+	};
+	VkRenderPassBeginInfo vkrpbInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+		.renderPass = vkRenderPass,
+		.framebuffer = vkFramebuffers[0],
+		.renderArea.offset = {0, 0},
+		.renderArea.extent = vkSurfaceCaps.currentExtent,
+		.clearValueCount = ARRAYSIZE(vkClearColors),
+		.pClearValues = vkClearColors,
+	};
+	vkCmdBeginRenderPass(vkCommandBuffers[0], &vkrpbInfo, VK_SUBPASS_CONTENTS_INLINE);
+	vkCmdSetViewport(vkCommandBuffers[0], 0, ARRAYSIZE(vkViewports), vkViewports);
+	vkCmdSetScissor(vkCommandBuffers[0], 0, ARRAYSIZE(vkScissors), vkScissors);
+	vkCmdDraw(vkCommandBuffers[0], 3, 1, 0, 0);
+#endif
+
 
 	SDL_Event e;
 	bool quit = false;
