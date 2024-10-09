@@ -828,6 +828,7 @@ int main(int argc, char **argv)
 			.pClearValues = vkClearColors,
 		};
 		vkCmdBeginRenderPass(vkCommandBuffers[0], &vkrpbInfo, VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdBindPipeline(vkCommandBuffers[0], VK_PIPELINE_BIND_POINT_GRAPHICS, vkGraphicsPipeline);
 		vkCmdSetViewport(vkCommandBuffers[0], 0, ARRAYSIZE(vkViewports), vkViewports);
 		vkCmdSetScissor(vkCommandBuffers[0], 0, ARRAYSIZE(vkScissors), vkScissors);
 		vkCmdDraw(vkCommandBuffers[0], 3, 1, 0, 0);
