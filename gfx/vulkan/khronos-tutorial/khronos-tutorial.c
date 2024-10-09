@@ -572,8 +572,8 @@ int main(int argc, char **argv)
 		{
 			.x = 0,
 			.y = 0,
-			.width = vkSurfaceCaps.currentExtent.width,
-			.height = vkSurfaceCaps.currentExtent.height,
+			.width = (float)vkSurfaceCaps.currentExtent.width,
+			.height = (float)vkSurfaceCaps.currentExtent.height,
 			.minDepth = 0,
 			.maxDepth = 1,
 		}
