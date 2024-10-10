@@ -19,7 +19,9 @@ vec3 colors[3] = vec3[](
 );
 
 void main() {
-	gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+	float t = 3.14 * uni.time;
+	mat2 rot = mat2(cos(t), -sin(t), sin(t), cos(t)); 
+	gl_Position = vec4(rot * positions[gl_VertexIndex], 0.0, 1.0);
 	fragColor = colors[gl_VertexIndex];
-	fragColor.b = sin(uni.time);
+	fragColor.b = sin(t);
 }
