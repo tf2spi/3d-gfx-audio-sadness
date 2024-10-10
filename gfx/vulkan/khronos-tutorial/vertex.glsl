@@ -7,9 +7,9 @@ layout(binding = 0) uniform Unis {
 } uni;
 
 vec2 positions[3] = vec2[](
-	vec2(0.5, 0.0),
-	vec2(-0.5, 0.0),
-	vec2(0.0, 0.5)
+	vec2(0.0, 0.5773502691896257),
+	vec2(-0.5, -0.28867513459481287),
+	vec2(0.5, -0.28867513459481287)
 );
 
 vec3 colors[3] = vec3[](
