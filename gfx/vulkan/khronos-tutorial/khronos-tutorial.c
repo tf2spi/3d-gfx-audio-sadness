@@ -230,6 +230,12 @@ static int createSwapchain(VkSurfaceKHR vkSurface, VkSurfaceCapabilitiesKHR *vkS
 	return 0;
 }
 
+static int recreateSwapchain(VkSurfaceKHR vkSurface, VkSurfaceCapabilitiesKHR *vkSurfaceCaps, VkSurfaceFormatKHR *vkFormatDesired, VkExtent2D vkExtentDesired, VkRenderPass vkRenderPass)
+{
+	vkDeviceWaitIdle(vkDevice);
+	return createSwapchain(vkSurface, vkSurfaceCaps, vkFormatDesired, vkExtentDesired, vkRenderPass);
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL vkDbgCb(
 	VkDebugUtilsMessageSeverityFlagBitsEXT severity,
 	VkDebugUtilsMessageTypeFlagsEXT flags,
@@ -284,7 +290,7 @@ int main(int argc, char **argv)
 		SDL_WINDOWPOS_UNDEFINED,
 		WIDTH,
 		HEIGHT,
-		SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN);
+		SDL_WINDOW_SHOWN | SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
 	if (window == NULL)
 	{
 		eprintf("Window could not be created! %s", SDL_GetError());
@@ -588,9 +594,10 @@ int main(int argc, char **argv)
 
 	}
 	int swapErr = createSwapchain(vkSurface, &vkSurfaceCaps, vkFormatDesired, vkExtentDesired, vkRenderPass);
-	if (swapErr != 0) {
+	if (0 != swapErr)
+	{
 		eprintf("Swapchain creation failed!\n");
-		return 1;
+		return swapErr;
 	}
 	eprintf("Finally created the swap chain + views! (My god...)\n");
 
@@ -847,22 +854,31 @@ int main(int argc, char **argv)
 			}
 		}
 
-		VkFence inFlightFence = inFlightFences[inFlight];
-		VkSemaphore imageAvailableSemaphore = imageAvailableSemaphores[inFlight];
-		VkSemaphore renderFinishedSemaphore = renderFinishedSemaphores[inFlight];
-		VkCommandBuffer commandBuffer = vkCommandBuffers[inFlight];
-		if (VK_SUCCESS != vkWaitForFences(vkDevice, 1, &inFlightFence, VK_TRUE, UINT64_MAX)
-			|| VK_SUCCESS != vkResetFences(vkDevice, 1, &inFlightFence))
-		{
-			eprintf("Fence operations failed... I hate everything...\n");
-			return 1;
-		}
 		uint32_t imageIndex;
-		if (VK_SUCCESS != (err = vkAcquireNextImageKHR(vkDevice, vkSwapchain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex)))
+		VkFence inFlightFence = inFlightFences[inFlight];
+		VkSemaphore renderFinishedSemaphore = renderFinishedSemaphores[inFlight];
+		VkSemaphore imageAvailableSemaphore = imageAvailableSemaphores[inFlight];
+		vkWaitForFences(vkDevice, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+		err = vkAcquireNextImageKHR(vkDevice, vkSwapchain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+		if (VK_ERROR_OUT_OF_DATE_KHR == err)
 		{
-			eprintf("Image not available boss! %d\n", err);
+			swapErr = recreateSwapchain(vkSurface, &vkSurfaceCaps, vkFormatDesired, vkExtentDesired, vkRenderPass);
+			if (0 != swapErr)
+			{
+				eprintf("Recreate swapchain failed after acquire!\n");
+				return swapErr;
+			}
+			// Bring it back from the top now...
+			continue;
+		}
+		else if (VK_SUCCESS != err && VK_SUBOPTIMAL_KHR != err)
+		{
+			eprintf("Can't acquire the next image, boss! %d\n", err);
 			return 1;
 		}
+		vkResetFences(vkDevice, 1, &inFlightFence);
+
+		VkCommandBuffer commandBuffer = vkCommandBuffers[inFlight];
 		vkResetCommandBuffer(commandBuffer, 0);
 
 		VkCommandBufferBeginInfo vkcbbInfo =
@@ -936,7 +952,18 @@ int main(int argc, char **argv)
 			.pImageIndices = &imageIndex,
 			.pResults = vkPresentResults,
 		};
-		if (VK_SUCCESS != vkQueuePresentKHR(vkPresentQueue, &vkPresentInfo) || VK_SUCCESS != vkPresentInfo.pResults[0])
+
+		err = vkQueuePresentKHR(vkPresentQueue, &vkPresentInfo);
+		if (VK_ERROR_OUT_OF_DATE_KHR == err || VK_SUBOPTIMAL_KHR == err)
+		{
+			swapErr = recreateSwapchain(vkSurface, &vkSurfaceCaps, vkFormatDesired, vkExtentDesired, vkRenderPass);
+			if (0 != swapErr)
+			{
+				eprintf("Recreate swapchain failed after present!\n");
+				return swapErr;
+			}
+		}
+		else if (VK_SUCCESS != err || VK_SUCCESS != vkPresentInfo.pResults[0])
 		{
 			eprintf("Vk queue present failed! RIP!\n");
 			return 1;
