@@ -20,6 +20,7 @@
 #define ARRAYSIZE(a) (sizeof(a) / sizeof(*a))
 #endif
 
+#define MAX_FRAMES_IN_FLIGHT 2
 #define WIDTH 640
 #define HEIGHT 480
 #define APP_SHORT_NAME "KhrTut"
@@ -63,6 +64,172 @@ static void *readfile(const char *fname, size_t *len_p) {
 	return mem;
 }
 
+// We love globals here
+VkPresentModeKHR vkPresentModeDesired = VK_PRESENT_MODE_FIFO_KHR;
+VkDevice vkDevice = 0;
+VkSwapchainKHR vkSwapchain = 0;
+VkImage *vkSwapchainImages = 0;
+uint32_t vkSwapchainImagesCount = 0;
+VkImageView *vkSwapchainImageViews = 0;
+VkFramebuffer *vkFramebuffers = 0;
+
+static int createSwapchain(VkSurfaceKHR vkSurface, VkSurfaceCapabilitiesKHR *vkSurfaceCaps, VkSurfaceFormatKHR *vkFormatDesired, VkExtent2D vkExtentDesired, VkRenderPass vkRenderPass)
+{
+	// Normally I'm not worried about freeing everything in a program
+	// but swapchain resources leaking is problematic because it needs
+	// to be reallocated everytime the window is resized
+	if (vkSwapchainImages)
+	{
+		free(vkSwapchainImages);
+		vkSwapchainImages = 0;
+	}
+	if (vkSwapchainImageViews)
+	{
+		for (uint32_t i = 0; i < vkSwapchainImagesCount; i++)
+		{
+			if (vkSwapchainImageViews[i])
+			{
+				vkDestroyImageView(vkDevice, vkSwapchainImageViews[i], 0);
+				vkSwapchainImageViews[i] = 0;
+			}
+		}
+		free(vkSwapchainImageViews);
+		vkSwapchainImageViews = 0;
+	}
+	if (vkFramebuffers)
+	{
+		for (uint32_t i = 0; i < vkSwapchainImagesCount; i++)
+		{
+			if (vkFramebuffers[i])
+			{
+				vkDestroyFramebuffer(vkDevice, vkFramebuffers[i], 0);
+				vkFramebuffers[i] = 0;
+			}
+		}
+		free(vkFramebuffers);
+		vkFramebuffers = 0;
+	}
+	if (vkSwapchain)
+	{
+		vkDestroySwapchainKHR(vkDevice, vkSwapchain, 0);
+		vkSwapchain = 0;
+	}
+	vkSwapchainImagesCount = 0;
+	// After this point, it's fine to not clean up after a failure in this function
+    
+	// I fucking hate Vulkan so much
+	if (vkSurfaceCaps->maxImageCount == 0)
+		vkSurfaceCaps->maxImageCount = vkSurfaceCaps->minImageCount;
+	uint32_t imageCount = minu32(vkSurfaceCaps->minImageCount + 1, vkSurfaceCaps->maxImageCount);
+	eprintf("Min,Count,Max Image Count=%u,%u,%u\n", vkSurfaceCaps->minImageCount, imageCount, vkSurfaceCaps->maxImageCount);
+	VkSwapchainCreateInfoKHR vkscInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+		.surface = vkSurface,
+		.minImageCount = imageCount,
+		.imageFormat = vkFormatDesired->format,
+		.imageColorSpace = vkFormatDesired->colorSpace,
+		.imageExtent = vkExtentDesired,
+		.imageArrayLayers = 1,
+		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+		/*
+		 * NOTE:
+		 * We differ from the Khronos tutorial right now by having
+		 * the graphics queue family equal to the presentation queue family.
+		 * If we couldn't find such a queue, we would set the fields
+		 * like this instead...
+		 * 
+		 * .imageSharingMode = VK_SHARING_MODE_CONCURRENT,
+		 * .queueFamilyIndexCount = 2,
+		 * .pQueueFamilyIndices = (uint32_t[2]){grFamily,prFamily},
+		 */
+		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.queueFamilyIndexCount = 0,
+		.pQueueFamilyIndices = 0,
+		.preTransform = vkSurfaceCaps->currentTransform,
+		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+		.presentMode = vkPresentModeDesired,
+		.clipped = VK_TRUE,
+		.oldSwapchain = 0,
+	};
+	if (VK_SUCCESS != vkCreateSwapchainKHR(vkDevice, &vkscInfo, 0, &vkSwapchain))
+	{
+		eprintf("Failed to create the swapchain!\n");
+		return 1;
+	}
+
+	if (VK_SUCCESS != vkGetSwapchainImagesKHR(vkDevice, vkSwapchain, &vkSwapchainImagesCount, vkSwapchainImages)
+		|| !(vkSwapchainImages = malloc(vkSwapchainImagesCount * sizeof(*vkSwapchainImages)))
+		|| !(vkSwapchainImageViews = calloc(sizeof(*vkSwapchainImageViews), vkSwapchainImagesCount))
+		|| VK_SUCCESS != vkGetSwapchainImagesKHR(vkDevice, vkSwapchain, &vkSwapchainImagesCount, vkSwapchainImages))
+	{
+		eprintf("Failed to get swapchain images!\n");
+		return 1;
+	}
+	eprintf("Vk Swapchain images count: %d\n", vkSwapchainImagesCount);
+	if (vkSwapchainImagesCount == 0)
+	{
+		eprintf("No swapchain images? Excuse me?");
+		return 1;
+	}
+	
+	for (uint32_t i = 0; i < vkSwapchainImagesCount; i++)
+	{
+		VkImageViewCreateInfo vkivcInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = vkSwapchainImages[i],
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = vkFormatDesired->format,
+			.components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
+			.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.subresourceRange.baseMipLevel = 0,
+			.subresourceRange.levelCount = 1,
+			.subresourceRange.baseArrayLayer = 0,
+			.subresourceRange.layerCount = 1,
+		};
+
+		if (VK_SUCCESS != vkCreateImageView(vkDevice, &vkivcInfo, 0, &vkSwapchainImageViews[i]))
+		{
+			eprintf("Failed to create image views!\n");
+			return 1;
+		}
+	}
+
+	vkFramebuffers = calloc(vkSwapchainImagesCount, sizeof(*vkFramebuffers));
+	if (vkFramebuffers == NULL)
+	{
+		eprintf("Failed to allocate array of Framebuffers!\n");
+		return 1;
+	}
+	for (size_t i = 0; i < vkSwapchainImagesCount; i++)
+	{
+		VkImageView vkImageViewAttachments[] = { vkSwapchainImageViews[i] };
+		VkFramebufferCreateInfo vkfcInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+			.renderPass = vkRenderPass,
+			.attachmentCount = ARRAYSIZE(vkImageViewAttachments),
+			.pAttachments = vkImageViewAttachments,
+			.width = vkExtentDesired.width,
+			.height = vkExtentDesired.height,
+			.layers = 1,
+		};
+		if (VK_SUCCESS != vkCreateFramebuffer(vkDevice, &vkfcInfo, 0, &vkFramebuffers[i]))
+		{
+			eprintf("Failed to allocate framebuffer!\n");
+			return 1;
+		}
+		eprintf("Created framebuffer %zu from view %p: %p\n", i,  vkImageViewAttachments[0], vkFramebuffers[i]);
+	}
+	eprintf("Created Framebuffers!\n");
+
+	return 0;
+}
+
 static VKAPI_ATTR VkBool32 VKAPI_CALL vkDbgCb(
 	VkDebugUtilsMessageSeverityFlagBitsEXT severity,
 	VkDebugUtilsMessageTypeFlagsEXT flags,
@@ -86,6 +253,8 @@ static VkDebugUtilsMessengerCreateInfoEXT vkdumcInfo =
 	.pfnUserCallback = vkDbgCb,
 	.pUserData = 0,
 };
+
+
 
 
 int main(int argc, char **argv)
@@ -257,7 +426,6 @@ int main(int argc, char **argv)
 		.ppEnabledExtensionNames = vkdcEnabledExtensions,
 		.pEnabledFeatures = 0,
 	};
-	VkDevice vkDevice = 0;
 	if (VK_SUCCESS != vkCreateDevice(vkPhysDevice, &vkdcInfo, 0, &vkDevice))
 	{
 		eprintf("Failed to create logical device!\n");
@@ -321,7 +489,6 @@ int main(int argc, char **argv)
 	}
 	eprintf("VK desired format: %u,%u\n", vkFormatDesired->format, vkFormatDesired->colorSpace);
 
-	VkPresentModeKHR vkPresentModeDesired = VK_PRESENT_MODE_FIFO_KHR;
 	eprintf("VK presentation modes\n");
 	for (uint32_t i = 0; i < vkPresentModesCount; i++)
 	{
@@ -345,97 +512,6 @@ int main(int argc, char **argv)
 	vkSurfaceCaps.currentExtent.height = extentHeight;
 
 	VkExtent2D vkExtentDesired = vkSurfaceCaps.currentExtent;
-	// I fucking hate Vulkan so much
-	if (vkSurfaceCaps.maxImageCount == 0)
-		vkSurfaceCaps.maxImageCount = vkSurfaceCaps.minImageCount;
-	uint32_t imageCount = minu32(vkSurfaceCaps.minImageCount + 1, vkSurfaceCaps.maxImageCount);
-	eprintf("Min,Count,Max Image Count=%u,%u,%u\n", vkSurfaceCaps.minImageCount, imageCount, vkSurfaceCaps.maxImageCount);
-	VkSwapchainCreateInfoKHR vkscInfo =
-	{
-		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-		.surface = vkSurface,
-		.minImageCount = imageCount,
-		.imageFormat = vkFormatDesired->format,
-		.imageColorSpace = vkFormatDesired->colorSpace,
-		.imageExtent = vkExtentDesired,
-		.imageArrayLayers = 1,
-		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-		/*
-		 * NOTE:
-		 * We differ from the Khronos tutorial right now by having
-		 * the graphics queue family equal to the presentation queue family.
-		 * If we couldn't find such a queue, we would set the fields
-		 * like this instead...
-		 * 
-		 * .imageSharingMode = VK_SHARING_MODE_CONCURRENT,
-		 * .queueFamilyIndexCount = 2,
-		 * .pQueueFamilyIndices = (uint32_t[2]){grFamily,prFamily},
-		 */
-		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
-		.queueFamilyIndexCount = 0,
-		.pQueueFamilyIndices = 0,
-		.preTransform = vkSurfaceCaps.currentTransform,
-		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-		.presentMode = vkPresentModeDesired,
-		.clipped = VK_TRUE,
-		.oldSwapchain = 0,
-	};
-	VkSwapchainKHR vkSwapchain;
-	if (VK_SUCCESS != vkCreateSwapchainKHR(vkDevice, &vkscInfo, 0, &vkSwapchain))
-	{
-		eprintf("Failed to create the swapchain!\n");
-		return 1;
-	}
-
-	VkImage *vkSwapchainImages = 0;
-	uint32_t vkSwapchainImagesCount = 0;
-	VkImageView *vkSwapchainImageViews = 0;
-
-	if (VK_SUCCESS != vkGetSwapchainImagesKHR(vkDevice, vkSwapchain, &vkSwapchainImagesCount, vkSwapchainImages)
-		|| !(vkSwapchainImages = malloc(vkSwapchainImagesCount * sizeof(*vkSwapchainImages)))
-		|| !(vkSwapchainImageViews = calloc(sizeof(*vkSwapchainImageViews), vkSwapchainImagesCount))
-		|| VK_SUCCESS != vkGetSwapchainImagesKHR(vkDevice, vkSwapchain, &vkSwapchainImagesCount, vkSwapchainImages))
-	{
-		eprintf("Failed to get swapchain images!\n");
-		return 1;
-	}
-	eprintf("Vk Swapchain images count: %d\n", vkSwapchainImagesCount);
-	if (vkSwapchainImagesCount == 0)
-	{
-		eprintf("No swapchain images? Excuse me?");
-		return 1;
-	}
-	
-	for (uint32_t i = 0; i < vkSwapchainImagesCount; i++)
-	{
-		VkImageViewCreateInfo vkivcInfo =
-		{
-			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-			.image = vkSwapchainImages[i],
-			.viewType = VK_IMAGE_VIEW_TYPE_2D,
-			.format = vkFormatDesired->format,
-			.components.r = VK_COMPONENT_SWIZZLE_IDENTITY,
-			.components.g = VK_COMPONENT_SWIZZLE_IDENTITY,
-			.components.b = VK_COMPONENT_SWIZZLE_IDENTITY,
-			.components.a = VK_COMPONENT_SWIZZLE_IDENTITY,
-			.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-			.subresourceRange.baseMipLevel = 0,
-			.subresourceRange.levelCount = 1,
-			.subresourceRange.baseArrayLayer = 0,
-			.subresourceRange.layerCount = 1,
-		};
-
-		if (VK_SUCCESS != vkCreateImageView(vkDevice, &vkivcInfo, 0, &vkSwapchainImageViews[i]))
-		{
-			eprintf("Failed to create image views!\n");
-			return 1;
-		}
-	}
-	for (uint32_t i = 0; i < vkSwapchainImagesCount; i++)
-	{
-		eprintf("Swapchain Image, View: %p, %p\n", vkSwapchainImages[i], vkSwapchainImageViews[i]);
-	}
-	eprintf("Finally created the swap chain + views! (My god...)\n");
 
 
 	VkPipelineLayoutCreateInfo vkplcInfo =
@@ -508,7 +584,15 @@ int main(int argc, char **argv)
 	{
 		eprintf("Failed to create render pass!\n");
 		return 1;
+	
+
 	}
+	int swapErr = createSwapchain(vkSurface, &vkSurfaceCaps, vkFormatDesired, vkExtentDesired, vkRenderPass);
+	if (swapErr != 0) {
+		eprintf("Swapchain creation failed!\n");
+		return 1;
+	}
+	eprintf("Finally created the swap chain + views! (My god...)\n");
 
 	size_t shadervlen, shaderflen;
 	void *shaderv = readfile("vertex.spv", &shadervlen);
@@ -575,8 +659,8 @@ int main(int argc, char **argv)
 		{
 			.x = 0,
 			.y = 0,
-			.width = (float)vkSurfaceCaps.currentExtent.width,
-			.height = (float)vkSurfaceCaps.currentExtent.height,
+			.width = (float)vkExtentDesired.width,
+			.height = (float)vkExtentDesired.height,
 			.minDepth = 0,
 			.maxDepth = 1,
 		}
@@ -585,7 +669,7 @@ int main(int argc, char **argv)
 	{
 		{
 			.offset = {0, 0},
-			.extent = vkSurfaceCaps.currentExtent,
+			.extent = vkExtentDesired,
 		}
 	};
 	VkPipelineViewportStateCreateInfo vkpvscInfo =
@@ -695,35 +779,6 @@ int main(int argc, char **argv)
 	}
 	eprintf("I created the graphics pipeline and I wanna kill someone!\n");
 
-	uint32_t vkFramebuffersCount = vkSwapchainImagesCount;
-	VkFramebuffer *vkFramebuffers = calloc(vkFramebuffersCount, sizeof(*vkFramebuffers));
-	if (vkFramebuffers == NULL)
-	{
-		eprintf("Failed to allocate array of Framebuffers!\n");
-		return 1;
-	}
-	for (size_t i = 0; i < vkFramebuffersCount; i++)
-	{
-		VkImageView vkImageViewAttachments[] = { vkSwapchainImageViews[i] };
-		VkFramebufferCreateInfo vkfcInfo =
-		{
-			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-			.renderPass = vkRenderPass,
-			.attachmentCount = ARRAYSIZE(vkImageViewAttachments),
-			.pAttachments = vkImageViewAttachments,
-			.width = vkSurfaceCaps.currentExtent.width,
-			.height = vkSurfaceCaps.currentExtent.height,
-			.layers = 1,
-		};
-		if (VK_SUCCESS != vkCreateFramebuffer(vkDevice, &vkfcInfo, 0, &vkFramebuffers[i]))
-		{
-			eprintf("Failed to allocate framebuffer!\n");
-			return 1;
-		}
-		eprintf("Created framebuffer %zu from view %p: %p\n", i,  vkImageViewAttachments[0], vkFramebuffers[i]);
-	}
-	eprintf("Created Framebuffers!\n");
-
 	VkCommandPoolCreateInfo vkpcInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -736,7 +791,7 @@ int main(int argc, char **argv)
 		eprintf("Failed to create command pool!\n");
 		return 1;
 	}
-	VkCommandBuffer vkCommandBuffers[1];
+	VkCommandBuffer vkCommandBuffers[MAX_FRAMES_IN_FLIGHT];
 	VkCommandBufferAllocateInfo vkcbaInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -751,9 +806,9 @@ int main(int argc, char **argv)
 	}
 	eprintf("I did a command buffer!\n");
 
-	VkSemaphore imageAvailableSemaphore;
-	VkSemaphore renderFinishedSemaphore;
-	VkFence inFlightFence;
+	VkSemaphore imageAvailableSemaphores[MAX_FRAMES_IN_FLIGHT];
+	VkSemaphore renderFinishedSemaphores[MAX_FRAMES_IN_FLIGHT];
+	VkFence inFlightFences[MAX_FRAMES_IN_FLIGHT];
 	VkSemaphoreCreateInfo vksemcInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -763,20 +818,23 @@ int main(int argc, char **argv)
 		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
 		.flags = VK_FENCE_CREATE_SIGNALED_BIT,
 	};
-	if (VK_SUCCESS != vkCreateSemaphore(vkDevice, &vksemcInfo, 0, &imageAvailableSemaphore)
-		|| VK_SUCCESS != vkCreateSemaphore(vkDevice, &vksemcInfo, 0, &renderFinishedSemaphore)
-		|| VK_SUCCESS != vkCreateFence(vkDevice, &vkfcInfo, 0, &inFlightFence))
+	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 	{
-		eprintf("Wasn't able to create synchronizatino primitive? What?\n");
-		return 1;
+		if (VK_SUCCESS != vkCreateSemaphore(vkDevice, &vksemcInfo, 0, &imageAvailableSemaphores[i])
+			|| VK_SUCCESS != vkCreateSemaphore(vkDevice, &vksemcInfo, 0, &renderFinishedSemaphores[i])
+			|| VK_SUCCESS != vkCreateFence(vkDevice, &vkfcInfo, 0, &inFlightFences[i]))
+		{
+			eprintf("Wasn't able to create synchronization primitive? What?\n");
+			return 1;
+		}
 	}
 
 	SDL_Event e;
 	bool quit = false;
-	//VkQueue vkGraphicsQueue, vkPresentQueue;
-	VkQueue vkGraphicsQueue;
+	VkQueue vkGraphicsQueue, vkPresentQueue;
 	vkGetDeviceQueue(vkDevice, vkQueueNodeIndex, 0, &vkGraphicsQueue);
-	// vkGetDeviceQueue(vkDevice, vkQueueNodeIndex, 0, &vkPresentQueue);
+	vkGetDeviceQueue(vkDevice, vkQueueNodeIndex, 0, &vkPresentQueue);
+	int inFlight = 0;
 	while (!quit)
 	{
 		while (SDL_PollEvent(&e))
@@ -788,6 +846,11 @@ int main(int argc, char **argv)
 				break;
 			}
 		}
+
+		VkFence inFlightFence = inFlightFences[inFlight];
+		VkSemaphore imageAvailableSemaphore = imageAvailableSemaphores[inFlight];
+		VkSemaphore renderFinishedSemaphore = renderFinishedSemaphores[inFlight];
+		VkCommandBuffer commandBuffer = vkCommandBuffers[inFlight];
 		if (VK_SUCCESS != vkWaitForFences(vkDevice, 1, &inFlightFence, VK_TRUE, UINT64_MAX)
 			|| VK_SUCCESS != vkResetFences(vkDevice, 1, &inFlightFence))
 		{
@@ -800,7 +863,7 @@ int main(int argc, char **argv)
 			eprintf("Image not available boss! %d\n", err);
 			return 1;
 		}
-		vkResetCommandBuffer(vkCommandBuffers[0], 0);
+		vkResetCommandBuffer(commandBuffer, 0);
 
 		VkCommandBufferBeginInfo vkcbbInfo =
 		{
@@ -808,7 +871,7 @@ int main(int argc, char **argv)
 			.flags = 0,
 			.pInheritanceInfo = 0,
 		};
-		if (VK_SUCCESS != vkBeginCommandBuffer(vkCommandBuffers[0], &vkcbbInfo))
+		if (VK_SUCCESS != vkBeginCommandBuffer(commandBuffer, &vkcbbInfo))
 		{
 			eprintf("Beginning command buffer failed!\n");
 			return 1;
@@ -823,17 +886,17 @@ int main(int argc, char **argv)
 			.renderPass = vkRenderPass,
 			.framebuffer = vkFramebuffers[imageIndex],
 			.renderArea.offset = {0, 0},
-			.renderArea.extent = vkSurfaceCaps.currentExtent,
+			.renderArea.extent = vkExtentDesired,
 			.clearValueCount = ARRAYSIZE(vkClearColors),
 			.pClearValues = vkClearColors,
 		};
-		vkCmdBeginRenderPass(vkCommandBuffers[0], &vkrpbInfo, VK_SUBPASS_CONTENTS_INLINE);
-		vkCmdBindPipeline(vkCommandBuffers[0], VK_PIPELINE_BIND_POINT_GRAPHICS, vkGraphicsPipeline);
-		vkCmdSetViewport(vkCommandBuffers[0], 0, ARRAYSIZE(vkViewports), vkViewports);
-		vkCmdSetScissor(vkCommandBuffers[0], 0, ARRAYSIZE(vkScissors), vkScissors);
-		vkCmdDraw(vkCommandBuffers[0], 3, 1, 0, 0);
-		vkCmdEndRenderPass(vkCommandBuffers[0]);
-		if (VK_SUCCESS != vkEndCommandBuffer(vkCommandBuffers[0]))
+		vkCmdBeginRenderPass(commandBuffer, &vkrpbInfo, VK_SUBPASS_CONTENTS_INLINE);
+		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkGraphicsPipeline);
+		vkCmdSetViewport(commandBuffer, 0, ARRAYSIZE(vkViewports), vkViewports);
+		vkCmdSetScissor(commandBuffer, 0, ARRAYSIZE(vkScissors), vkScissors);
+		vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+		vkCmdEndRenderPass(commandBuffer);
+		if (VK_SUCCESS != vkEndCommandBuffer(commandBuffer))
 		{
 			eprintf("Failed to record the command buffer!\n");
 			return 1;
@@ -850,7 +913,7 @@ int main(int argc, char **argv)
 			.pWaitSemaphores = waitSemaphores,
 			.pWaitDstStageMask = waitStages,
 			.commandBufferCount = 1,
-			.pCommandBuffers = &vkCommandBuffers[0],
+			.pCommandBuffers = &commandBuffer,
 			.signalSemaphoreCount = ARRAYSIZE(signalSemaphores),
 			.pSignalSemaphores = signalSemaphores,
 		};
@@ -873,16 +936,15 @@ int main(int argc, char **argv)
 			.pImageIndices = &imageIndex,
 			.pResults = vkPresentResults,
 		};
-		if (VK_SUCCESS != vkQueuePresentKHR(vkGraphicsQueue, &vkPresentInfo) || VK_SUCCESS != vkPresentInfo.pResults[0])
+		if (VK_SUCCESS != vkQueuePresentKHR(vkPresentQueue, &vkPresentInfo) || VK_SUCCESS != vkPresentInfo.pResults[0])
 		{
 			eprintf("Vk queue present failed! RIP!\n");
 			return 1;
 		}
-
-		vkQueueWaitIdle(vkGraphicsQueue);
-		vkDeviceWaitIdle(vkDevice);
+		inFlight = (inFlight + 1) % MAX_FRAMES_IN_FLIGHT;
 	}
 
+	vkQueueWaitIdle(vkGraphicsQueue);
 	vkDeviceWaitIdle(vkDevice);
 	SDL_DestroyWindow(window);
 	SDL_Quit();
