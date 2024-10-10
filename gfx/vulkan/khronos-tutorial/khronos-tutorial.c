@@ -275,7 +275,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	VkSurfaceCapabilitiesKHR vkSurfaceCaps;
+	VkSurfaceCapabilitiesKHR vkSurfaceCaps = {};
 	if (VK_SUCCESS != vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vkPhysDevice, vkSurface, &vkSurfaceCaps))
 	{
 		eprintf("Failed to get physical surface capabilities!\n");
@@ -377,7 +377,6 @@ int main(int argc, char **argv)
 		.clipped = VK_TRUE,
 		.oldSwapchain = 0,
 	};
-	(void)vkExtentDesired;
 	VkSwapchainKHR vkSwapchain;
 	if (VK_SUCCESS != vkCreateSwapchainKHR(vkDevice, &vkscInfo, 0, &vkSwapchain))
 	{
@@ -397,6 +396,7 @@ int main(int argc, char **argv)
 		eprintf("Failed to get swapchain images!\n");
 		return 1;
 	}
+	eprintf("Vk Swapchain images count: %d\n", vkSwapchainImagesCount);
 	if (vkSwapchainImagesCount == 0)
 	{
 		eprintf("No swapchain images? Excuse me?");
@@ -590,7 +590,7 @@ int main(int argc, char **argv)
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
 		.viewportCount = ARRAYSIZE(vkViewports),
 		.pViewports = vkViewports,
-		.scissorCount = ARRAYSIZE(vkViewports),
+		.scissorCount = ARRAYSIZE(vkScissors),
 		.pScissors = vkScissors,
 	};
 	VkPipelineRasterizationStateCreateInfo vkprscInfo =
@@ -768,10 +768,6 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	// "Record" a command buffer, whatever the hell that means... 
-#if 0
-#endif
-
 
 	SDL_Event e;
 	bool quit = false;
@@ -789,9 +785,12 @@ int main(int argc, char **argv)
 				break;
 			}
 		}
-		uint32_t imageIndex = 0;
-		// vkWaitForFences(vkDevice, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+		vkWaitForFences(vkDevice, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+		vkResetFences(vkDevice, 1, &inFlightFence);
+		uint32_t imageIndex;
+		eprintf("Index 0: %u\n", imageIndex);
 		vkAcquireNextImageKHR(vkDevice, vkSwapchain, UINT16_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+		eprintf("Index 1: %u\n", imageIndex);
 		vkResetCommandBuffer(vkCommandBuffers[0], 0);
 
 		VkCommandBufferBeginInfo vkcbbInfo =
@@ -807,15 +806,7 @@ int main(int argc, char **argv)
 		}
 		VkClearValue vkClearColors[] =
 		{
-			{
-				.color =
-				{
-					.float32 =
-					{
-						0, 0, 0, 1
-					}
-				}
-			}
+			{ .color = { .float32 = { 0, 0, 0, 1 } } }
 		};
 		VkRenderPassBeginInfo vkrpbInfo =
 		{
@@ -839,40 +830,51 @@ int main(int argc, char **argv)
 			return 1;
 		}
 
-		VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		VkSemaphore waitSemaphores[] = {imageAvailableSemaphore};
+		VkSemaphore signalSemaphores[] = {renderFinishedSemaphore};
+		VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+		(void)waitSemaphores;
 		VkSubmitInfo vkSubmitInfo =
 		{
 			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-			.waitSemaphoreCount = 1,
-			.pWaitSemaphores = &imageAvailableSemaphore,
-			.pWaitDstStageMask = &stageFlags,
-			.commandBufferCount = ARRAYSIZE(vkCommandBuffers),
-			.pCommandBuffers = vkCommandBuffers,
-			.signalSemaphoreCount = 1,
-			.pSignalSemaphores = &renderFinishedSemaphore,
+			.waitSemaphoreCount = ARRAYSIZE(waitSemaphores),
+			.pWaitSemaphores = waitSemaphores,
+			.pWaitDstStageMask = waitStages,
+			.commandBufferCount = 1,
+			.pCommandBuffers = &vkCommandBuffers[0],
+			.signalSemaphoreCount = ARRAYSIZE(signalSemaphores),
+			.pSignalSemaphores = signalSemaphores,
 		};
 
 		if (VK_SUCCESS != vkQueueSubmit(vkGraphicsQueue, 1, &vkSubmitInfo, inFlightFence))
 		{
-			eprintf("Fasiled to submit queue!\n");
+			eprintf("Failed to submit queue!\n");
 			return 1;
 		}
+		vkQueueWaitIdle(vkGraphicsQueue);
 
-		VkSwapchainKHR vkSwapChains[] = {vkSwapchain};
+		VkSwapchainKHR vkSwapchains[] = {vkSwapchain};
+		VkResult vkPresentResults[ARRAYSIZE(vkSwapchains)];
 		VkPresentInfoKHR vkPresentInfo =
 		{
 			.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-			.waitSemaphoreCount = 1,
-			.pWaitSemaphores = &renderFinishedSemaphore,
-			.swapchainCount = 1,
-			.pSwapchains = vkSwapChains,
+			.waitSemaphoreCount = ARRAYSIZE(signalSemaphores),
+			.pWaitSemaphores = signalSemaphores, 
+			.swapchainCount = ARRAYSIZE(vkSwapchains),
+			.pSwapchains = vkSwapchains,
 			.pImageIndices = &imageIndex,
-			.pResults = 0,
+			.pResults = vkPresentResults,
 		};
-		vkQueuePresentKHR(vkPresentQueue, &vkPresentInfo);
-		// vkResetFences(vkDevice, 1, &inFlightFence);
+		eprintf("Index 2: %u\n", vkPresentInfo.pImageIndices[0]);
+		if (VK_SUCCESS != vkQueuePresentKHR(vkPresentQueue, &vkPresentInfo) || VK_SUCCESS != vkPresentInfo.pResults[0])
+		{
+			eprintf("Vk queue present failed! RIP!\n");
+			return 1;
+		}
+		eprintf("Index 3: %u\n", vkPresentInfo.pImageIndices[0]);
 	}
 
+	vkDeviceWaitIdle(vkDevice);
 	SDL_DestroyWindow(window);
 	SDL_Quit();
 
