@@ -773,9 +773,10 @@ int main(int argc, char **argv)
 
 	SDL_Event e;
 	bool quit = false;
-	VkQueue vkGraphicsQueue, vkPresentQueue;
+	//VkQueue vkGraphicsQueue, vkPresentQueue;
+	VkQueue vkGraphicsQueue;
 	vkGetDeviceQueue(vkDevice, vkQueueNodeIndex, 0, &vkGraphicsQueue);
-	vkGetDeviceQueue(vkDevice, vkQueueNodeIndex, 0, &vkPresentQueue);
+	// vkGetDeviceQueue(vkDevice, vkQueueNodeIndex, 0, &vkPresentQueue);
 	while (!quit)
 	{
 		while (SDL_PollEvent(&e))
@@ -787,12 +788,18 @@ int main(int argc, char **argv)
 				break;
 			}
 		}
-		vkWaitForFences(vkDevice, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-		vkResetFences(vkDevice, 1, &inFlightFence);
+		if (VK_SUCCESS != vkWaitForFences(vkDevice, 1, &inFlightFence, VK_TRUE, UINT64_MAX)
+			|| VK_SUCCESS != vkResetFences(vkDevice, 1, &inFlightFence))
+		{
+			eprintf("Fence operations failed... I hate everything...\n");
+			return 1;
+		}
 		uint32_t imageIndex;
-		eprintf("Index 0: %u\n", imageIndex);
-		vkAcquireNextImageKHR(vkDevice, vkSwapchain, UINT16_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
-		eprintf("Index 1: %u\n", imageIndex);
+		if (VK_SUCCESS != (err = vkAcquireNextImageKHR(vkDevice, vkSwapchain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex)))
+		{
+			eprintf("Image not available boss! %d\n", err);
+			return 1;
+		}
 		vkResetCommandBuffer(vkCommandBuffers[0], 0);
 
 		VkCommandBufferBeginInfo vkcbbInfo =
@@ -853,7 +860,6 @@ int main(int argc, char **argv)
 			eprintf("Failed to submit queue!\n");
 			return 1;
 		}
-		vkQueueWaitIdle(vkGraphicsQueue);
 
 		VkSwapchainKHR vkSwapchains[] = {vkSwapchain};
 		VkResult vkPresentResults[ARRAYSIZE(vkSwapchains)];
@@ -867,13 +873,14 @@ int main(int argc, char **argv)
 			.pImageIndices = &imageIndex,
 			.pResults = vkPresentResults,
 		};
-		eprintf("Index 2: %u\n", vkPresentInfo.pImageIndices[0]);
-		if (VK_SUCCESS != vkQueuePresentKHR(vkPresentQueue, &vkPresentInfo) || VK_SUCCESS != vkPresentInfo.pResults[0])
+		if (VK_SUCCESS != vkQueuePresentKHR(vkGraphicsQueue, &vkPresentInfo) || VK_SUCCESS != vkPresentInfo.pResults[0])
 		{
 			eprintf("Vk queue present failed! RIP!\n");
 			return 1;
 		}
-		eprintf("Index 3: %u\n", vkPresentInfo.pImageIndices[0]);
+
+		vkQueueWaitIdle(vkGraphicsQueue);
+		vkDeviceWaitIdle(vkDevice);
 	}
 
 	vkDeviceWaitIdle(vkDevice);
@@ -882,6 +889,8 @@ int main(int argc, char **argv)
 
 	// This is only one of the many things we need to clean up.
 	// This is here now only to test that debug messenger flags this.
+	// In an actual game where I can't really do much if Vulkan doesn't work,
+	// I may or may not mind it leaking anyways (*gasp*)...
 	vkDestroyInstance(vkInstance, 0);
 	return 0;
 }
