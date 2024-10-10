@@ -261,8 +261,6 @@ static VkDebugUtilsMessengerCreateInfoEXT vkdumcInfo =
 };
 
 
-
-
 int main(int argc, char **argv)
 {
 	(void)argc;
@@ -519,12 +517,34 @@ int main(int argc, char **argv)
 
 	VkExtent2D vkExtentDesired = vkSurfaceCaps.currentExtent;
 
-
+#if 0
+	VkDescriptorSetLayoutBinding vkLayoutBindings[] =
+	{
+		{
+			.binding = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.descriptorCount = 1,
+			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+		}
+	};
+	VkDescriptorSetLayoutCreateInfo vkdslcInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		.bindingCount = ARRAYSIZE(vkLayoutBindings),
+		.pBindings = vkLayoutBindings,
+	};
+	VkDescriptorSetLayout vkLayout = 0;
+	if (VK_SUCCESS != vkCreateDescriptorSetLayout(vkDevice, &vkdslcInfo, 0, &vkLayout))
+	{
+		eprintf("Failed to create descriptor set layout!\n");
+		return 1;
+	}
+#endif
 	VkPipelineLayoutCreateInfo vkplcInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		.setLayoutCount = 0,
-		.pSetLayouts = 0,
+		// .setLayoutCount = 1,
+		// .pSetLayouts = &vkLayout,
 		.pushConstantRangeCount = 0,
 		.pPushConstantRanges = 0,
 	};
@@ -635,6 +655,7 @@ int main(int argc, char **argv)
 		eprintf("Failed to create fragment shader module!\n");
 		return 1;
 	}
+
 
 	VkDynamicState vkDynStates[] =
 	{
@@ -813,9 +834,19 @@ int main(int argc, char **argv)
 	}
 	eprintf("I did a command buffer!\n");
 
-	VkSemaphore imageAvailableSemaphores[MAX_FRAMES_IN_FLIGHT];
-	VkSemaphore renderFinishedSemaphores[MAX_FRAMES_IN_FLIGHT];
-	VkFence inFlightFences[MAX_FRAMES_IN_FLIGHT];
+	/* 
+ 	 * Because I happen to hate myself, I'm doing uniform buffers when I could've
+	 * gotten away with a push constant because these are familiar from opengl and
+	 * teaches me how Vulkan does buffer management unlike push constants.
+	 */
+ #if 0
+	VkBuffer uniformBuffers[MAX_FRAMES_IN_FLIGHT] = {};
+	VkDeviceMemory uniformMemories[MAX_FRAMES_IN_FLIGHT] = {};
+	struct Unis { float time; } *uniformMemoriesMapped[MAX_FRAMES_IN_FLIGHT] = {};
+#endif
+	VkSemaphore imageAvailableSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
+	VkSemaphore renderFinishedSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
+	VkFence inFlightFences[MAX_FRAMES_IN_FLIGHT] = {};
 	VkSemaphoreCreateInfo vksemcInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -834,6 +865,54 @@ int main(int argc, char **argv)
 			eprintf("Wasn't able to create synchronization primitive? What?\n");
 			return 1;
 		}
+
+		#if 0
+		VkBufferCreateInfo vkbcInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+			.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			.size = sizeof(**uniformMemoriesMapped),
+			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+			.flags = 0,
+		};
+		if (VK_SUCCESS != vkCreateBuffer(vkDevice, &vkbcInfo, 0, &uniformBuffers[i]))
+		{
+			eprintf("Unable to create uniform buffer in flight!\n");
+			return 1;
+		}
+		VkMemoryRequirements vkMemReqs;
+		vkGetBufferMemoryRequirements(vkDevice, uniformBuffers[i], &vkMemReqs);
+		VkPhysicalDeviceMemoryProperties vkPhysDevMemProps;
+		vkGetPhysicalDeviceMemoryProperties(vkPhysDevice, &vkPhysDevMemProps);
+		uint32_t memoryTypeIdx;
+		uint32_t properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+		for (memoryTypeIdx = 0; memoryTypeIdx < vkPhysDevMemProps.memoryTypeCount; memoryTypeIdx++)
+		{
+			if ((vkMemReqs.memoryTypeBits & (memoryTypeIdx << 1)) || (vkPhysDevMemProps.memoryTypes[memoryTypeIdx].propertyFlags & properties))
+				break;
+		}
+		if (memoryTypeIdx >= vkPhysDevMemProps.memoryTypeCount)
+		{
+			eprintf("No physical memory available for mapable uniforms. Sad...\n");
+			return 1;
+		}
+		VkMemoryAllocateInfo vkmaInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+			.memoryTypeIndex = memoryTypeIdx,
+			.allocationSize = vkMemReqs.size,
+		};
+		if (VK_SUCCESS != vkAllocateMemory(vkDevice, &vkmaInfo, 0, &uniformMemories[i])
+			|| VK_SUCCESS != vkBindBufferMemory(vkDevice, uniformBuffers[i], uniformMemories[i], 0)
+			|| VK_SUCCESS != vkMapMemory(vkDevice, uniformMemories[i], 0, vkbcInfo.size, 0, (void **)&uniformMemoriesMapped[i]))
+		{
+			eprintf("Booooooo! Failed to map uniform buffer memories!\n");
+			return 1;
+		}
+		(void)vkmaInfo;
+		(void)uniformMemories;
+		(void)uniformMemoriesMapped;
+		#endif
 	}
 
 	SDL_Event e;
