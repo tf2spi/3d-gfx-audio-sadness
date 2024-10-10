@@ -450,7 +450,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	VkSurfaceCapabilitiesKHR vkSurfaceCaps = {};
+	VkSurfaceCapabilitiesKHR vkSurfaceCaps = { 0 };
 	if (VK_SUCCESS != vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vkPhysDevice, vkSurface, &vkSurfaceCaps))
 	{
 		eprintf("Failed to get physical surface capabilities!\n");
@@ -517,7 +517,6 @@ int main(int argc, char **argv)
 
 	VkExtent2D vkExtentDesired = vkSurfaceCaps.currentExtent;
 
-#if 0
 	VkDescriptorSetLayoutBinding vkLayoutBindings[] =
 	{
 		{
@@ -539,12 +538,11 @@ int main(int argc, char **argv)
 		eprintf("Failed to create descriptor set layout!\n");
 		return 1;
 	}
-#endif
 	VkPipelineLayoutCreateInfo vkplcInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		// .setLayoutCount = 1,
-		// .pSetLayouts = &vkLayout,
+		.setLayoutCount = 1,
+		.pSetLayouts = &vkLayout,
 		.pushConstantRangeCount = 0,
 		.pPushConstantRanges = 0,
 	};
@@ -839,14 +837,12 @@ int main(int argc, char **argv)
 	 * gotten away with a push constant because these are familiar from opengl and
 	 * teaches me how Vulkan does buffer management unlike push constants.
 	 */
- #if 0
-	VkBuffer uniformBuffers[MAX_FRAMES_IN_FLIGHT] = {};
-	VkDeviceMemory uniformMemories[MAX_FRAMES_IN_FLIGHT] = {};
-	struct Unis { float time; } *uniformMemoriesMapped[MAX_FRAMES_IN_FLIGHT] = {};
-#endif
-	VkSemaphore imageAvailableSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
-	VkSemaphore renderFinishedSemaphores[MAX_FRAMES_IN_FLIGHT] = {};
-	VkFence inFlightFences[MAX_FRAMES_IN_FLIGHT] = {};
+	VkBuffer uniformBuffers[MAX_FRAMES_IN_FLIGHT] = { 0 };
+	VkDeviceMemory uniformMemories[MAX_FRAMES_IN_FLIGHT] = { 0 };
+	struct Unis { float time; } *uniformMemoriesMapped[MAX_FRAMES_IN_FLIGHT] = { 0 };
+	VkSemaphore imageAvailableSemaphores[MAX_FRAMES_IN_FLIGHT] = { 0 };
+	VkSemaphore renderFinishedSemaphores[MAX_FRAMES_IN_FLIGHT] = { 0 };
+	VkFence inFlightFences[MAX_FRAMES_IN_FLIGHT] = { 0 };
 	VkSemaphoreCreateInfo vksemcInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -866,7 +862,6 @@ int main(int argc, char **argv)
 			return 1;
 		}
 
-		#if 0
 		VkBufferCreateInfo vkbcInfo =
 		{
 			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -909,10 +904,63 @@ int main(int argc, char **argv)
 			eprintf("Booooooo! Failed to map uniform buffer memories!\n");
 			return 1;
 		}
-		(void)vkmaInfo;
-		(void)uniformMemories;
-		(void)uniformMemoriesMapped;
-		#endif
+	}
+
+	// Now the descriptors for the buffers. Ughhhhhhhhhhhhhhhhhhhh...
+	VkDescriptorPoolSize vkDescPoolSize =
+	{
+		.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+		.descriptorCount = MAX_FRAMES_IN_FLIGHT,
+	};
+	VkDescriptorPoolCreateInfo vkdpcInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+		.poolSizeCount = 1,
+		.pPoolSizes = &vkDescPoolSize,
+		.maxSets = MAX_FRAMES_IN_FLIGHT,
+
+	};
+	VkDescriptorPool vkDescriptorPool;
+	if (VK_SUCCESS != vkCreateDescriptorPool(vkDevice, &vkdpcInfo, 0, &vkDescriptorPool))
+	{
+		eprintf("Failed to create descriptor pool!\n");
+		return 1;
+	}
+	VkDescriptorSet vkDescSets[MAX_FRAMES_IN_FLIGHT];
+	VkDescriptorSetLayout vkDescLayouts[MAX_FRAMES_IN_FLIGHT] = { vkLayout, vkLayout, };
+	VkDescriptorSetAllocateInfo vkdsaInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+		.descriptorPool = vkDescriptorPool,
+		.descriptorSetCount = MAX_FRAMES_IN_FLIGHT,
+		.pSetLayouts = vkDescLayouts,
+	};
+	if (VK_SUCCESS != vkAllocateDescriptorSets(vkDevice, &vkdsaInfo, vkDescSets))
+	{
+		eprintf("Failed to alllocate descriptor sets!\n");
+		return 1;
+	}
+	for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+	{
+		VkDescriptorBufferInfo bufInfo =
+		{
+			.buffer = uniformBuffers[i],
+			.offset = 0,
+			.range = sizeof(**uniformMemoriesMapped),
+		};
+		VkWriteDescriptorSet descriptorWrite =
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = vkDescSets[i],
+			.dstBinding = 0,
+			.dstArrayElement = 0,
+			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.descriptorCount = 1,
+			.pBufferInfo = &bufInfo,
+			.pImageInfo = 0,
+			.pTexelBufferView = 0,
+		};
+		vkUpdateDescriptorSets(vkDevice, 1, &descriptorWrite, 0, 0);
 	}
 
 	SDL_Event e;
@@ -934,6 +982,8 @@ int main(int argc, char **argv)
 		}
 
 		uint32_t imageIndex;
+		struct Unis *unis = uniformMemoriesMapped[inFlight];
+		VkDescriptorSet descSet = vkDescSets[inFlight];
 		VkFence inFlightFence = inFlightFences[inFlight];
 		VkSemaphore renderFinishedSemaphore = renderFinishedSemaphores[inFlight];
 		VkSemaphore imageAvailableSemaphore = imageAvailableSemaphores[inFlight];
@@ -985,8 +1035,10 @@ int main(int argc, char **argv)
 			.clearValueCount = ARRAYSIZE(vkClearColors),
 			.pClearValues = vkClearColors,
 		};
+		unis->time = SDL_GetTicks() / 1000.0f;
 		vkCmdBeginRenderPass(commandBuffer, &vkrpbInfo, VK_SUBPASS_CONTENTS_INLINE);
 		vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkGraphicsPipeline);
+		vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipelineLayout, 0, 1, &descSet, 0, 0);
 		vkCmdSetViewport(commandBuffer, 0, ARRAYSIZE(vkViewports), vkViewports);
 		vkCmdSetScissor(commandBuffer, 0, ARRAYSIZE(vkScissors), vkScissors);
 		vkCmdDraw(commandBuffer, 3, 1, 0, 0);
